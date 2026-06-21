@@ -8,6 +8,7 @@ import persistence.EventDao;
 import persistence.ReminderDao;
 import service.AppState;
 import ui.LoginDialog;
+import ui.MainWindow;
 
 public class Main {
 
@@ -30,8 +31,12 @@ public class Main {
             LoginDialog login = new LoginDialog(state);
             login.setVisible(true);
 
-            System.out.println("Usuario ativo: " + state.getActiveUser());
-            // TODO proxima etapa: abrir a janela principal usando 'state'
+            // so chega aqui depois do login confirmado (modal). abre a tela principal.
+            if (state.isLoggedIn()) {
+                System.out.println("Usuario ativo: " + state.getActiveUser());
+                MainWindow main = new MainWindow(state);
+                main.setVisible(true);
+            }
         });
     }
 }
