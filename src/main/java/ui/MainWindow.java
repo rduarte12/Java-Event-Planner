@@ -1,8 +1,10 @@
 package ui;
 
 import java.awt.BorderLayout;
+import java.awt.FlowLayout;
 import java.time.LocalDate;
 
+import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -54,13 +56,39 @@ public class MainWindow extends JFrame {
         dailyView.showDay(inicial);
         weeklyView.showWeek(inicial);
 
+        // barra de cima com o botao de criar evento (RF09)
+        JButton newEvent = new JButton("Novo Evento");
+        newEvent.addActionListener(e -> openEventForm());
+        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        toolbar.add(newEvent);
+
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, calendarPanel, tabs);
         split.setDividerLocation(340);
-        setContentPane(split);
+
+        JPanel root = new JPanel(new BorderLayout());
+        root.add(toolbar, BorderLayout.NORTH);
+        root.add(split, BorderLayout.CENTER);
+        setContentPane(root);
 
         setSize(900, 600);
         setMinimumSize(new java.awt.Dimension(700, 450));
         setLocationRelativeTo(null);
+    }
+
+    // abre o formulario de criacao ja com o dia selecionado preenchido.
+    // depois de salvar, repinta o calendario e as duas visoes.
+    private void openEventForm() {
+        LocalDate dia = calendarPanel.getSelectedDate();
+        EventFormDialog dialog = new EventFormDialog(this, state, dia, this::refreshViews);
+        dialog.setVisible(true);
+    }
+
+    // atualiza tudo a partir da colecao em memoria (apos criar evento)
+    private void refreshViews() {
+        calendarPanel.refresh();
+        LocalDate sel = calendarPanel.getSelectedDate();
+        dailyView.showDay(sel);
+        weeklyView.showWeek(sel);
     }
 
     // painel temporario pra aba de Equipe enquanto ela nao existe
