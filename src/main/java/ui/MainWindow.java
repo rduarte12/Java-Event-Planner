@@ -56,11 +56,14 @@ public class MainWindow extends JFrame {
         dailyView.showDay(inicial);
         weeklyView.showWeek(inicial);
 
-        // barra de cima com o botao de criar evento (RF09)
+        // barra de cima: criar evento (RF09) e buscar (RF12)
         JButton newEvent = new JButton("Novo Evento");
         newEvent.addActionListener(e -> openEventForm());
+        JButton search = new JButton("Buscar");
+        search.addActionListener(e -> openSearch());
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT));
         toolbar.add(newEvent);
+        toolbar.add(search);
 
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, calendarPanel, tabs);
         split.setDividerLocation(340);
@@ -80,6 +83,12 @@ public class MainWindow extends JFrame {
     private void openEventForm() {
         LocalDate dia = calendarPanel.getSelectedDate();
         EventFormDialog dialog = new EventFormDialog(this, state, dia, this::refreshViews);
+        dialog.setVisible(true);
+    }
+
+    // abre a busca modal sobre a tela principal (RF12)
+    private void openSearch() {
+        SearchDialog dialog = new SearchDialog(this, state.getEventDao());
         dialog.setVisible(true);
     }
 

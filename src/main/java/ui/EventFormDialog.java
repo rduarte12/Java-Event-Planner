@@ -2,15 +2,20 @@ package ui;
 
 import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
+import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JDialog;
@@ -44,7 +49,12 @@ public class EventFormDialog extends JDialog {
     private final JTextField locationField = new JTextField(20);
     private final JTextArea descriptionArea = new JTextArea(3, 20);
     private final JComboBox<Category> categoryCombo = new JComboBox<>(Category.values());
-    private final JTextField leadField = new JTextField(20);
+
+    // RF16: um evento pode ter varios lembretes (lead times diferentes).
+    // o usuario digita um valor, clica "Adicionar" e ele entra nessa lista.
+    private final JTextField leadField = new JTextField(8);
+    private final DefaultListModel<Integer> leadModel = new DefaultListModel<>();
+    private final JList<Integer> leadList = new JList<>(leadModel);
 
     public EventFormDialog(Frame owner, AppState state, LocalDate initialDate, Runnable onSaved) {
         super(owner, "Novo Evento", true);
@@ -88,7 +98,7 @@ public class EventFormDialog extends JDialog {
         addRow(form, row++, "Descricao:", new JScrollPane(descriptionArea));
 
         addRow(form, row++, "Categoria*:", categoryCombo);
-        addRow(form, row++, "Lembrete (min antes):", leadField);
+        addRow(form, row++, "Lembretes (min antes):", buildLeadPanel());
 
         JButton save = new JButton("Salvar");
         JButton cancel = new JButton("Cancelar");
@@ -104,6 +114,68 @@ public class EventFormDialog extends JDialog {
         content.add(form, BorderLayout.CENTER);
         content.add(buttons, BorderLayout.SOUTH);
         return content;
+    }
+
+    // painel dos lembretes (RF16): campo + "Adicionar", a lista dos lead times
+    // ja inseridos e um "Remover" pro selecionado.
+    private JPanel buildLeadPanel() {
+        JButton add = new JButton("Adicionar");
+        add.addActionListener(e -> addLead());
+        JButton remove = new JButton("Remover");
+        remove.addActionListener(e -> removeLead());
+
+        JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        top.add(leadField);
+        top.add(add);
+        top.add(remove);
+
+        leadList.setVisibleRowCount(3);
+        JScrollPane listScroll = new JScrollPane(leadList);
+        listScroll.setPreferredSize(new Dimension(160, 60));
+
+        JPanel panel = new JPanel(new BorderLayout(0, 4));
+        panel.add(top, BorderLayout.NORTH);
+        panel.add(listScroll, BorderLayout.CENTER);
+        return panel;
+    }
+
+    // valida o campo e adiciona o lead time na lista (sem repetir)
+    private void addLead() {
+        Integer lead = parseLead(leadField.getText().trim());
+        if (lead == null) {
+            return; // parseLead ja avisou o erro
+        }
+        if (!leadModel.contains(lead)) {
+            leadModel.addElement(lead);
+        }
+        leadField.setText("");
+    }
+
+    private void removeLead() {
+        int i = leadList.getSelectedIndex();
+        if (i >= 0) {
+            leadModel.remove(i);
+        }
+    }
+
+    // converte o texto num lead time valido (>=0) ou avisa e devolve null
+    private Integer parseLead(String text) {
+        if (text.isEmpty()) {
+            error("Informe a antecedencia do lembrete em minutos.");
+            return null;
+        }
+        int v;
+        try {
+            v = Integer.parseInt(text);
+        } catch (NumberFormatException ex) {
+            error("Antecedencia do lembrete invalida. Informe minutos (numero inteiro).");
+            return null;
+        }
+        if (v < 0) {
+            error("A antecedencia do lembrete nao pode ser negativa.");
+            return null;
+        }
+        return v;
     }
 
     // adiciona uma linha rotulo + campo no GridBag
@@ -160,20 +232,20 @@ public class EventFormDialog extends JDialog {
             return;
         }
 
-        // lead time e opcional: vazio = sem lembrete
-        Integer lead = null;
-        String leadText = leadField.getText().trim();
-        if (!leadText.isEmpty()) {
-            try {
-                lead = Integer.parseInt(leadText);
-            } catch (NumberFormatException ex) {
-                error("Antecedencia do lembrete invalida. Informe minutos (numero inteiro).");
-                return;
+        // RF16: junta todos os lead times informados - os que ja estao na lista
+        // mais um eventual valor que o usuario digitou e nao clicou "Adicionar".
+        // lista vazia = evento sem lembrete.
+        Set<Integer> leads = new LinkedHashSet<>();
+        for (int i = 0; i < leadModel.size(); i++) {
+            leads.add(leadModel.get(i));
+        }
+        String pending = leadField.getText().trim();
+        if (!pending.isEmpty()) {
+            Integer lead = parseLead(pending);
+            if (lead == null) {
+                return; // parseLead ja avisou o erro
             }
-            if (lead < 0) {
-                error("A antecedencia do lembrete nao pode ser negativa.");
-                return;
-            }
+            leads.add(lead);
         }
 
         // tudo valido: monta o evento
@@ -192,8 +264,8 @@ public class EventFormDialog extends JDialog {
         // RNF03: Append no events.csv
         state.getEventDao().append(e);
 
-        // se pediu lembrete, cria o Reminder e tambem por Append
-        if (lead != null) {
+        // RF16: um Reminder por lead time, todos por Append
+        for (int lead : leads) {
             Reminder r = new Reminder();
             r.setReminderId(CsvUtils.newUuid());
             r.setEventId(e.getId());
