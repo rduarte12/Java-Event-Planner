@@ -1,6 +1,7 @@
 package ui;
 
 import java.awt.BorderLayout;
+import java.time.LocalDate;
 
 import javax.swing.JComponent;
 import javax.swing.JFrame;
@@ -13,13 +14,15 @@ import javax.swing.SwingConstants;
 import service.AppState;
 
 // Janela principal (RF04/RF05). Divide a tela: calendario mensal a esquerda
-// e um painel de abas a direita (Diaria / Semanal / Equipe). Por enquanto as
-// abas sao placeholders - vao ser preenchidas nas proximas etapas.
+// e um painel de abas a direita. Diaria e Semanal ja funcionam reagindo ao
+// dia selecionado; a aba de Equipe ainda e placeholder.
 public class MainWindow extends JFrame {
 
     private final AppState state;
     private final CalendarPanel calendarPanel;
     private final JTabbedPane tabs;
+    private final DailyView dailyView;
+    private final WeeklyView weeklyView;
 
     public MainWindow(AppState state) {
         super("Java Event Planner - " + state.getActiveUser());
@@ -30,16 +33,26 @@ public class MainWindow extends JFrame {
         // esquerda: calendario lendo a colecao em memoria
         calendarPanel = new CalendarPanel(state.getEventDao());
 
-        // direita: tres abas navegaveis ainda vazias (RF05)
+        // direita: abas. Diaria e Semanal leem o mesmo ArrayList em memoria.
+        dailyView = new DailyView(state.getEventDao());
+        weeklyView = new WeeklyView(state.getEventDao());
+
         tabs = new JTabbedPane();
-        tabs.addTab("Visao Diaria", placeholder("Visao Diaria"));
-        tabs.addTab("Visao Semanal", placeholder("Visao Semanal"));
+        tabs.addTab("Visao Diaria", dailyView);
+        tabs.addTab("Visao Semanal", weeklyView);
         tabs.addTab("Visao de Equipe (Persons)", placeholder("Visao de Equipe (Persons)"));
 
-        // quando um dia e clicado no calendario, as abas vao reagir (proxima etapa)
+        // RF06/RF07/US03: clicar num dia atualiza as duas visoes na hora,
+        // de forma sincrona na EDT (sem releitura de disco).
         calendarPanel.setDaySelectionListener(date -> {
-            // TODO proxima etapa: filtrar e atualizar as abas conforme o dia selecionado
+            dailyView.showDay(date);
+            weeklyView.showWeek(date);
         });
+
+        // ja inicia mostrando o dia selecionado de partida (hoje)
+        LocalDate inicial = calendarPanel.getSelectedDate();
+        dailyView.showDay(inicial);
+        weeklyView.showWeek(inicial);
 
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, calendarPanel, tabs);
         split.setDividerLocation(340);
@@ -50,7 +63,7 @@ public class MainWindow extends JFrame {
         setLocationRelativeTo(null);
     }
 
-    // painel temporario pra cada aba enquanto as views nao existem
+    // painel temporario pra aba de Equipe enquanto ela nao existe
     private JComponent placeholder(String name) {
         JPanel p = new JPanel(new BorderLayout());
         p.add(new JLabel(name + " (em construcao)", SwingConstants.CENTER), BorderLayout.CENTER);
