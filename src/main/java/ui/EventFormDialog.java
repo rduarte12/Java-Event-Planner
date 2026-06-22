@@ -12,7 +12,6 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.LinkedHashSet;
 import java.util.Set;
-
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
@@ -26,22 +25,19 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
-
 import model.Category;
 import model.Event;
 import model.Reminder;
 import persistence.CsvUtils;
 import service.AppState;
 
-// Formulario modal de criacao de evento (RF09). Faz a validacao rigorosa dos
-// campos e, se tudo certo, persiste por Append (RNF03): grava o evento no
-// events.csv e, se houver lead time, o lembrete no reminders.csv. Qualquer
-// erro de validacao e mostrado via JOptionPane e bloqueia o salvamento (RNF05).
 public class EventFormDialog extends JDialog {
 
     private final AppState state;
     private final Runnable onSaved;
+    private Event editingEvent = null; // null = Criação, preenchido = Edição
 
+    // Declaração dos componentes visuais restaurada
     private final JTextField titleField = new JTextField(20);
     private final JTextField dateField = new JTextField(20);
     private final JTextField timeField = new JTextField(20);
@@ -50,23 +46,40 @@ public class EventFormDialog extends JDialog {
     private final JTextArea descriptionArea = new JTextArea(3, 20);
     private final JComboBox<Category> categoryCombo = new JComboBox<>(Category.values());
 
-    // RF16: um evento pode ter varios lembretes (lead times diferentes).
-    // o usuario digita um valor, clica "Adicionar" e ele entra nessa lista.
     private final JTextField leadField = new JTextField(8);
     private final DefaultListModel<Integer> leadModel = new DefaultListModel<>();
     private final JList<Integer> leadList = new JList<>(leadModel);
 
+    // Construtor antigo para manter compatibilidade com a tela principal (Criação)
     public EventFormDialog(Frame owner, AppState state, LocalDate initialDate, Runnable onSaved) {
-        super(owner, "Novo Evento", true);
+        this(owner, state, initialDate, null, onSaved);
+    }
+
+    // Novo construtor híbrido (Criação e Edição)
+    public EventFormDialog(Frame owner, AppState state, LocalDate initialDate, Event editingEvent, Runnable onSaved) {
+        super(owner, editingEvent == null ? "Novo Evento" : "Editar Evento", true);
         this.state = state;
+        this.editingEvent = editingEvent;
         this.onSaved = onSaved;
 
-        // valores iniciais pra facilitar (a data ja vem do dia selecionado)
-        dateField.setText(initialDate.toString()); // ISO AAAA-MM-DD
-        timeField.setText("09:00");
-        durationField.setText("60");
+        if (editingEvent != null) {
+            titleField.setText(editingEvent.getTitle());
+            dateField.setText(editingEvent.getDate().toString());
+            timeField.setText(editingEvent.getTime().toString());
+            durationField.setText(String.valueOf(editingEvent.getDuration()));
+            locationField.setText(editingEvent.getLocation());
+            descriptionArea.setText(editingEvent.getDescription());
+            categoryCombo.setSelectedItem(editingEvent.getCategory());
 
-        // mostra a categoria com rotulo amigavel (Meeting/Birthday/Appointment)
+            state.getReminderDao().getAll().stream()
+                .filter(r -> r.getEventId().equals(editingEvent.getId()))
+                .forEach(r -> leadModel.addElement(r.getLeadTimeMinutes()));
+        } else {
+            dateField.setText(initialDate.toString());
+            timeField.setText("09:00");
+            durationField.setText("60");
+        }
+
         categoryCombo.setRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value,
@@ -116,8 +129,6 @@ public class EventFormDialog extends JDialog {
         return content;
     }
 
-    // painel dos lembretes (RF16): campo + "Adicionar", a lista dos lead times
-    // ja inseridos e um "Remover" pro selecionado.
     private JPanel buildLeadPanel() {
         JButton add = new JButton("Adicionar");
         add.addActionListener(e -> addLead());
@@ -139,11 +150,10 @@ public class EventFormDialog extends JDialog {
         return panel;
     }
 
-    // valida o campo e adiciona o lead time na lista (sem repetir)
     private void addLead() {
         Integer lead = parseLead(leadField.getText().trim());
         if (lead == null) {
-            return; // parseLead ja avisou o erro
+            return; 
         }
         if (!leadModel.contains(lead)) {
             leadModel.addElement(lead);
@@ -158,7 +168,6 @@ public class EventFormDialog extends JDialog {
         }
     }
 
-    // converte o texto num lead time valido (>=0) ou avisa e devolve null
     private Integer parseLead(String text) {
         if (text.isEmpty()) {
             error("Informe a antecedencia do lembrete em minutos.");
@@ -178,7 +187,6 @@ public class EventFormDialog extends JDialog {
         return v;
     }
 
-    // adiciona uma linha rotulo + campo no GridBag
     private void addRow(JPanel form, int row, String label, Component field) {
         GridBagConstraints lc = new GridBagConstraints();
         lc.gridx = 0;
@@ -196,7 +204,6 @@ public class EventFormDialog extends JDialog {
         form.add(field, fc);
     }
 
-    // valida tudo; se passar, monta o evento e persiste por Append.
     private void onSave() {
         String title = titleField.getText().trim();
         if (title.isEmpty()) {
@@ -206,7 +213,7 @@ public class EventFormDialog extends JDialog {
 
         LocalDate date;
         try {
-            date = LocalDate.parse(dateField.getText().trim()); // valida formato ISO
+            date = LocalDate.parse(dateField.getText().trim());
         } catch (RuntimeException ex) {
             error("Data invalida. Use o formato AAAA-MM-DD.");
             return;
@@ -214,7 +221,7 @@ public class EventFormDialog extends JDialog {
 
         LocalTime time;
         try {
-            time = LocalTime.parse(timeField.getText().trim()); // valida HH:mm
+            time = LocalTime.parse(timeField.getText().trim());
         } catch (RuntimeException ex) {
             error("Hora invalida. Use o formato HH:mm (24h).");
             return;
@@ -232,9 +239,6 @@ public class EventFormDialog extends JDialog {
             return;
         }
 
-        // RF16: junta todos os lead times informados - os que ja estao na lista
-        // mais um eventual valor que o usuario digitou e nao clicou "Adicionar".
-        // lista vazia = evento sem lembrete.
         Set<Integer> leads = new LinkedHashSet<>();
         for (int i = 0; i < leadModel.size(); i++) {
             leads.add(leadModel.get(i));
@@ -243,34 +247,55 @@ public class EventFormDialog extends JDialog {
         if (!pending.isEmpty()) {
             Integer lead = parseLead(pending);
             if (lead == null) {
-                return; // parseLead ja avisou o erro
+                return; 
             }
             leads.add(lead);
         }
 
-        // tudo valido: monta o evento
-        Event e = new Event();
-        e.setId(CsvUtils.newUuid());
-        e.setTitle(title);
-        e.setDate(date);
-        e.setTime(time);
-        e.setDuration(duration);
-        e.setLocation(locationField.getText().trim());
-        e.setDescription(descriptionArea.getText().trim());
-        e.setCategory((Category) categoryCombo.getSelectedItem());
-        state.stampOwner(e);       // RF02: dono = Usuario Ativo
-        e.setRecurrenceId(null);   // sem recorrencia nesta etapa
+        if (editingEvent != null) {
+            editingEvent.setTitle(title);
+            editingEvent.setDate(date);
+            editingEvent.setTime(time);
+            editingEvent.setDuration(duration);
+            editingEvent.setLocation(locationField.getText().trim());
+            editingEvent.setDescription(descriptionArea.getText().trim());
+            editingEvent.setCategory((Category) categoryCombo.getSelectedItem());
 
-        // RNF03: Append no events.csv
-        state.getEventDao().append(e);
+            state.getEventDao().rewriteAll();
 
-        // RF16: um Reminder por lead time, todos por Append
-        for (int lead : leads) {
-            Reminder r = new Reminder();
-            r.setReminderId(CsvUtils.newUuid());
-            r.setEventId(e.getId());
-            r.setLeadTimeMinutes(lead);
-            state.getReminderDao().append(r);
+            state.getReminderDao().getAll().removeIf(r -> r.getEventId().equals(editingEvent.getId()));
+            for (int lead : leads) {
+                Reminder r = new Reminder();
+                r.setReminderId(CsvUtils.newUuid());
+                r.setEventId(editingEvent.getId());
+                r.setLeadTimeMinutes(lead);
+                state.getReminderDao().getAll().add(r);
+            }
+            
+            state.getReminderDao().rewriteAll();
+
+        } else {
+            Event e = new Event();
+            e.setId(CsvUtils.newUuid());
+            e.setTitle(title);
+            e.setDate(date);
+            e.setTime(time);
+            e.setDuration(duration);
+            e.setLocation(locationField.getText().trim());
+            e.setDescription(descriptionArea.getText().trim());
+            e.setCategory((Category) categoryCombo.getSelectedItem());
+            state.stampOwner(e); 
+            e.setRecurrenceId(null); 
+
+            state.getEventDao().append(e);
+
+            for (int lead : leads) {
+                Reminder r = new Reminder();
+                r.setReminderId(CsvUtils.newUuid());
+                r.setEventId(e.getId());
+                r.setLeadTimeMinutes(lead);
+                state.getReminderDao().append(r);
+            }
         }
 
         if (onSaved != null) {

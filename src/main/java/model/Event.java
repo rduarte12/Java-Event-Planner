@@ -112,4 +112,15 @@ public class Event {
     public void setRecurrenceId(String recurrenceId) {
         this.recurrenceId = recurrenceId;
     }
+
+    @Override
+    public String toString() {
+        // Garante que não vai dar erro caso algum campo esteja nulo
+        String dataFormatada = (date != null) ? date.toString() : "Sem data";
+        String horaFormatada = (time != null) ? time.toString() : "--:--";
+        String categoriaFmt = (category != null) ? category.name() : "Sem categoria";
+        
+        // Retorna um formato elegante. Ex: "2026-06-25 14:00 - Reunião de Pauta [MEETING]"
+        return String.format("%s %s - %s [%s]", dataFormatada, horaFormatada, title, categoriaFmt);
+    }
 }

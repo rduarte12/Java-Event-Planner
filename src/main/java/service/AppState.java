@@ -3,7 +3,6 @@ package service;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
-
 import model.Event;
 import persistence.EventDao;
 import persistence.ReminderDao;
@@ -15,7 +14,7 @@ public class AppState {
 
     // conjunto fixo inicial de usuarios do sistema. mesmo num events.csv vazio
     // sempre tem com quem logar.
-    private static final String[] DEFAULT_USERS = {"Alice", "Bruno", "Carla"};
+    private static final String[] DEFAULT_USERS = {"Alice", "Bruno", "Carla", "Diego", "Eduarda"};
 
     private final EventDao eventDao;
     private final ReminderDao reminderDao;

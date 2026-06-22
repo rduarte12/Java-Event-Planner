@@ -9,7 +9,6 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
-
 import model.Category;
 import model.Event;
 
@@ -72,7 +71,7 @@ public class EventDao {
         }
     }
 
-    // colecao viva em memoria - fonte unica de verdade.
+    // colecao viva em memoria fonte unica de verdade.
     // a UI altera essa lista e depois chama rewriteAll().
     public List<Event> getAll() {
         return events;

@@ -2,23 +2,26 @@ package ui;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.util.Locale;
-
 import javax.swing.BorderFactory;
-import javax.swing.BoxLayout;
+import javax.swing.DefaultListModel;
+import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
+import javax.swing.JList;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
+import javax.swing.ListSelectionModel;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-
 import model.Event;
 import persistence.EventDao;
+import service.AppState;
 
 // Busca modal (RF12). Fica por cima da tela principal e filtra os eventos em
 // memoria em tempo real (a cada tecla) pelos campos titulo, descricao e local.
@@ -27,22 +30,62 @@ public class SearchDialog extends JDialog {
 
     private final EventDao eventDao;
     private final JTextField queryField = new JTextField(28);
-    private final JPanel results = new JPanel();
+    private final DefaultListModel<Event> listModel = new DefaultListModel<>();
+    private final JList<Event> resultList = new JList<>(listModel);
+    private final AppState state;
+    private final JButton btnEdit = new JButton("Editar");
+    private final JButton btnDelete = new JButton("Excluir");
+    private final JLabel statusLabel = new JLabel("Digite uma palavra-chave para buscar...");
 
-    public SearchDialog(Frame owner, EventDao eventDao) {
-        super(owner, "Buscar eventos", true);
+    public SearchDialog(Frame owner, EventDao eventDao, AppState state) {
+        super(owner, "Buscar e Gerenciar eventos", true);
         this.eventDao = eventDao;
+        this.state = state;
+        
 
-        JPanel top = new JPanel(new BorderLayout(6, 0));
+        JPanel top = new JPanel(new BorderLayout(6, 4));
         top.setBorder(BorderFactory.createEmptyBorder(10, 12, 6, 12));
-        top.add(new JLabel("Palavra-chave:"), BorderLayout.WEST);
-        top.add(queryField, BorderLayout.CENTER);
+        JPanel searchPanel = new JPanel(new BorderLayout(6, 0));
+        searchPanel.add(new JLabel("Palavra-chave:"), BorderLayout.WEST);
+        searchPanel.add(queryField, BorderLayout.CENTER);
 
-        results.setLayout(new BoxLayout(results, BoxLayout.Y_AXIS));
-        results.setBackground(Color.WHITE);
-        JScrollPane scroll = new JScrollPane(results);
+        top.add(searchPanel, BorderLayout.NORTH);
+        top.add(statusLabel, BorderLayout.SOUTH); // Aviso fixo abaixo da barra
+
+        // Estiliza o statusLabel 
+        statusLabel.setForeground(Color.GRAY);
+        statusLabel.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
+
+        resultList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        JScrollPane scroll = new JScrollPane(resultList);
         scroll.setPreferredSize(new Dimension(560, 320));
         scroll.getVerticalScrollBar().setUnitIncrement(16);
+
+        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        btnEdit.setEnabled(false);
+        btnDelete.setEnabled(false);
+        bottomPanel.add(btnEdit);
+        bottomPanel.add(btnDelete);
+
+        // Lógica de Segurança (RF03 e RF10/11)
+        resultList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                Event selectedEvent = resultList.getSelectedValue();
+                if (selectedEvent != null) {
+                    // Verifica se o usuário ativo é o dono do evento selecionado
+                    boolean isOwner = selectedEvent.getOwner().equals(state.getActiveUser());
+                    btnEdit.setEnabled(isOwner);
+                    btnDelete.setEnabled(isOwner);
+                } else {
+                    btnEdit.setEnabled(false);
+                    btnDelete.setEnabled(false);
+                }
+            }
+        });
+
+        // Ações dos botões (esqueletos)
+        btnDelete.addActionListener(e -> deleteSelectedEvent());
+        btnEdit.addActionListener(e -> editSelectedEvent());
 
         // busca em tempo real: qualquer mudanca no texto refiltra
         queryField.getDocument().addDocumentListener(new DocumentListener() {
@@ -55,6 +98,7 @@ public class SearchDialog extends JDialog {
         content.add(top, BorderLayout.NORTH);
         content.add(scroll, BorderLayout.CENTER);
         setContentPane(content);
+        content.add(bottomPanel, BorderLayout.SOUTH);
 
         refresh(); // estado inicial (campo vazio)
         pack();
@@ -63,27 +107,30 @@ public class SearchDialog extends JDialog {
 
     // refiltra os eventos conforme o texto e remonta a lista de resultados
     private void refresh() {
-        results.removeAll();
+        listModel.clear(); // Limpa a lista de resultados
         String q = queryField.getText().trim().toLowerCase(Locale.ROOT);
 
         if (q.isEmpty()) {
-            addNotice("Digite uma palavra-chave para buscar...");
+            statusLabel.setText("Digite uma palavra-chave para buscar...");
         } else {
             int achados = 0;
             for (Event e : eventDao.getAll()) {
                 if (matches(e, q)) {
-                    Component row = EventRow.create(e);
-                    ((JPanel) row).setAlignmentX(Component.LEFT_ALIGNMENT);
-                    results.add(row);
+                    listModel.addElement(e); // Adiciona apenas o objeto Event
                     achados++;
                 }
             }
+
             if (achados == 0) {
-                addNotice("Nenhum evento encontrado.");
+                statusLabel.setText("Nenhum evento encontrado.");
+            } else {
+                statusLabel.setText(achados + " evento(s) encontrado(s)."); // Bônus de usabilidade
             }
         }
-        results.revalidate();
-        results.repaint();
+
+        // Garante que os botões de ação travem se a busca for alterada
+        btnEdit.setEnabled(false);
+        btnDelete.setEnabled(false);
     }
 
     // confere se a palavra aparece no titulo, descricao ou local
@@ -97,11 +144,42 @@ public class SearchDialog extends JDialog {
         return field != null && field.toLowerCase(Locale.ROOT).contains(q);
     }
 
-    private void addNotice(String text) {
-        JLabel n = new JLabel(text);
-        n.setForeground(Color.GRAY);
-        n.setBorder(BorderFactory.createEmptyBorder(8, 6, 8, 6));
-        n.setAlignmentX(Component.LEFT_ALIGNMENT);
-        results.add(n);
+    private void deleteSelectedEvent() {
+        Event selected = resultList.getSelectedValue();
+        if (selected == null) return;
+
+        // Confirmação (RF11)
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Tem certeza que deseja excluir o evento '" + selected.getTitle() + "'?",
+                "Confirmar Exclusão",
+                JOptionPane.YES_NO_OPTION);
+
+        if (confirm == JOptionPane.YES_OPTION) {
+            // 1. Remove da memória
+            eventDao.getAll().remove(selected);
+            
+            // 2. Remove lembretes órfãos (precisa acessar o ReminderDao pelo state)
+            state.getReminderDao().getAll().removeIf(r -> r.getEventId().equals(selected.getId()));
+
+            // 3. Persiste no disco (Full Rewrite)
+            eventDao.rewriteAll();
+            state.getReminderDao().rewriteAll();
+
+            // 4. Atualiza a interface
+            refresh(); // Refaz a busca para remover o item da tela
+            JOptionPane.showMessageDialog(this, "Evento excluído com sucesso.");
+        }
+    }
+
+    private void editSelectedEvent() {
+        Event selected = resultList.getSelectedValue();
+        if (selected == null) return;
+
+        // PASSAMOS o 'selected' como o 4º parâmetro para ativar o modo de edição
+        EventFormDialog dialog = new EventFormDialog((Frame) this.getOwner(), state, selected.getDate(), selected, () -> {
+            refresh(); // Quando fechar a edição, limpa a JList e traz as informações novas
+        });
+        
+        dialog.setVisible(true);
     }
 }
