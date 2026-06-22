@@ -5,6 +5,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Frame;
+import java.time.LocalDate;
 import java.util.Locale;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
@@ -148,27 +149,56 @@ public class SearchDialog extends JDialog {
         Event selected = resultList.getSelectedValue();
         if (selected == null) return;
 
-        // Confirmação (RF11)
-        int confirm = JOptionPane.showConfirmDialog(this,
-                "Tem certeza que deseja excluir o evento '" + selected.getTitle() + "'?",
-                "Confirmar Exclusão",
-                JOptionPane.YES_NO_OPTION);
-
-        if (confirm == JOptionPane.YES_OPTION) {
-            // 1. Remove da memória
-            eventDao.getAll().remove(selected);
+        boolean deleteSeries = false;
+        
+        // RF24: Se o evento faz parte de uma série, apresenta opções modais de exclusão
+        if (selected.getRecurrenceId() != null) {
+            String[] options = {"Somente esta", "Esta e as futuras", "Cancelar"};
+            int choice = JOptionPane.showOptionDialog(this,
+                    "Este evento faz parte de uma série recorrente.\nDeseja excluir somente esta ocorrência ou esta e todas as futuras?",
+                    "Excluir Série Recorrente",
+                    JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, options, options[0]);
             
-            // 2. Remove lembretes órfãos (precisa acessar o ReminderDao pelo state)
-            state.getReminderDao().getAll().removeIf(r -> r.getEventId().equals(selected.getId()));
-
-            // 3. Persiste no disco (Full Rewrite)
-            eventDao.rewriteAll();
-            state.getReminderDao().rewriteAll();
-
-            // 4. Atualiza a interface
-            refresh(); // Refaz a busca para remover o item da tela
-            JOptionPane.showMessageDialog(this, "Evento excluído com sucesso.");
+            if (choice == 2 || choice == JOptionPane.CLOSED_OPTION) {
+                return; // Aborta
+            }
+            if (choice == 1) {
+                deleteSeries = true;
+            }
+        } else {
+            // Confirmação simples para eventos comuns
+            int confirm = JOptionPane.showConfirmDialog(this,
+                    "Tem certeza que deseja excluir o evento '" + selected.getTitle() + "'?",
+                    "Confirmar Exclusão",
+                    JOptionPane.YES_NO_OPTION);
+            if (confirm != JOptionPane.YES_OPTION) return;
         }
+
+        if (deleteSeries) {
+            String recId = selected.getRecurrenceId();
+            LocalDate baseDate = selected.getDate();
+            
+            // Filtra os IDs das ocorrências futuras da série para limpar a cascata de lembretes
+            java.util.List<String> idsToRemove = eventDao.getAll().stream()
+                    .filter(e -> recId.equals(e.getRecurrenceId()) && !e.getDate().isBefore(baseDate))
+                    .map(Event::getId)
+                    .collect(java.util.stream.Collectors.toList());
+
+            // Executa a remoção em massa na memória (DT08)
+            eventDao.getAll().removeIf(e -> recId.equals(e.getRecurrenceId()) && !e.getDate().isBefore(baseDate));
+            state.getReminderDao().getAll().removeIf(r -> idsToRemove.contains(r.getEventId()));
+        } else {
+            // Remoção isolada da ocorrência selecionada
+            eventDao.getAll().remove(selected);
+            state.getReminderDao().getAll().removeIf(r -> r.getEventId().equals(selected.getId()));
+        }
+
+        // Sincroniza as alterações no disco usando reescrita completa
+        eventDao.rewriteAll();
+        state.getReminderDao().rewriteAll();
+
+        refresh(); // Atualiza o JList instantaneamente
+        JOptionPane.showMessageDialog(this, "Operação realizada com sucesso.");
     }
 
     private void editSelectedEvent() {

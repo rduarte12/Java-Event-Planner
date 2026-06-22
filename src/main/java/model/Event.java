@@ -115,12 +115,12 @@ public class Event {
 
     @Override
     public String toString() {
-        // Garante que não vai dar erro caso algum campo esteja nulo
         String dataFormatada = (date != null) ? date.toString() : "Sem data";
         String horaFormatada = (time != null) ? time.toString() : "--:--";
         String categoriaFmt = (category != null) ? category.name() : "Sem categoria";
+        // RF22: adiciona o ícone de rotação se for evento recorrente
+        String indicadorRecorrencia = (recurrenceId != null) ? " ↻" : "";
         
-        // Retorna um formato elegante. Ex: "2026-06-25 14:00 - Reunião de Pauta [MEETING]"
-        return String.format("%s %s - %s [%s]", dataFormatada, horaFormatada, title, categoriaFmt);
+        return String.format("%s %s%s - %s [%s]", dataFormatada, horaFormatada, indicadorRecorrencia, title, categoriaFmt);
     }
 }

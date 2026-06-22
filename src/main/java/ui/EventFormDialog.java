@@ -16,6 +16,7 @@ import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
@@ -35,9 +36,8 @@ public class EventFormDialog extends JDialog {
 
     private final AppState state;
     private final Runnable onSaved;
-    private Event editingEvent = null; // null = Criação, preenchido = Edição
+    private Event editingEvent = null;
 
-    // Declaração dos componentes visuais restaurada
     private final JTextField titleField = new JTextField(20);
     private final JTextField dateField = new JTextField(20);
     private final JTextField timeField = new JTextField(20);
@@ -46,21 +46,40 @@ public class EventFormDialog extends JDialog {
     private final JTextArea descriptionArea = new JTextArea(3, 20);
     private final JComboBox<Category> categoryCombo = new JComboBox<>(Category.values());
 
+    // Componentes de Recorrência
+    private final JCheckBox repeatCheck = new JCheckBox("Repetir evento");
+    private final JComboBox<String> freqCombo = new JComboBox<>(new String[]{"Diariamente", "Semanalmente", "Mensalmente"});
+    private final JTextField occurrencesField = new JTextField("10", 5);
+    private final JPanel recurrencePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+
     private final JTextField leadField = new JTextField(8);
     private final DefaultListModel<Integer> leadModel = new DefaultListModel<>();
     private final JList<Integer> leadList = new JList<>(leadModel);
 
-    // Construtor antigo para manter compatibilidade com a tela principal (Criação)
     public EventFormDialog(Frame owner, AppState state, LocalDate initialDate, Runnable onSaved) {
         this(owner, state, initialDate, null, onSaved);
     }
 
-    // Novo construtor híbrido (Criação e Edição)
     public EventFormDialog(Frame owner, AppState state, LocalDate initialDate, Event editingEvent, Runnable onSaved) {
         super(owner, editingEvent == null ? "Novo Evento" : "Editar Evento", true);
         this.state = state;
         this.editingEvent = editingEvent;
         this.onSaved = onSaved;
+
+        recurrencePanel.add(new JLabel("Frequência:"));
+        recurrencePanel.add(freqCombo);
+        recurrencePanel.add(new JLabel("Repetir por:"));
+        recurrencePanel.add(occurrencesField);
+        recurrencePanel.add(new JLabel("vezes (2-50)"));
+
+        freqCombo.setEnabled(false);
+        occurrencesField.setEnabled(false);
+
+        repeatCheck.addActionListener(e -> {
+            boolean isChecked = repeatCheck.isSelected();
+            freqCombo.setEnabled(isChecked);
+            occurrencesField.setEnabled(isChecked);
+        });
 
         if (editingEvent != null) {
             titleField.setText(editingEvent.getTitle());
@@ -74,6 +93,10 @@ public class EventFormDialog extends JDialog {
             state.getReminderDao().getAll().stream()
                 .filter(r -> r.getEventId().equals(editingEvent.getId()))
                 .forEach(r -> leadModel.addElement(r.getLeadTimeMinutes()));
+
+            repeatCheck.setEnabled(false);
+            freqCombo.setEnabled(false);
+            occurrencesField.setEnabled(false);
         } else {
             dateField.setText(initialDate.toString());
             timeField.setText("09:00");
@@ -111,6 +134,10 @@ public class EventFormDialog extends JDialog {
         addRow(form, row++, "Descricao:", new JScrollPane(descriptionArea));
 
         addRow(form, row++, "Categoria*:", categoryCombo);
+        
+        addRow(form, row++, "", repeatCheck);
+        addRow(form, row++, "", recurrencePanel);
+        
         addRow(form, row++, "Lembretes (min antes):", buildLeadPanel());
 
         JButton save = new JButton("Salvar");
@@ -152,9 +179,7 @@ public class EventFormDialog extends JDialog {
 
     private void addLead() {
         Integer lead = parseLead(leadField.getText().trim());
-        if (lead == null) {
-            return; 
-        }
+        if (lead == null) return; 
         if (!leadModel.contains(lead)) {
             leadModel.addElement(lead);
         }
@@ -246,55 +271,174 @@ public class EventFormDialog extends JDialog {
         String pending = leadField.getText().trim();
         if (!pending.isEmpty()) {
             Integer lead = parseLead(pending);
-            if (lead == null) {
-                return; 
-            }
+            if (lead == null) return; 
             leads.add(lead);
         }
 
         if (editingEvent != null) {
-            editingEvent.setTitle(title);
-            editingEvent.setDate(date);
-            editingEvent.setTime(time);
-            editingEvent.setDuration(duration);
-            editingEvent.setLocation(locationField.getText().trim());
-            editingEvent.setDescription(descriptionArea.getText().trim());
-            editingEvent.setCategory((Category) categoryCombo.getSelectedItem());
-
-            state.getEventDao().rewriteAll();
-
-            state.getReminderDao().getAll().removeIf(r -> r.getEventId().equals(editingEvent.getId()));
-            for (int lead : leads) {
-                Reminder r = new Reminder();
-                r.setReminderId(CsvUtils.newUuid());
-                r.setEventId(editingEvent.getId());
-                r.setLeadTimeMinutes(lead);
-                state.getReminderDao().getAll().add(r);
+            boolean updateSeries = false;
+            if (editingEvent.getRecurrenceId() != null) {
+                String[] options = {"Somente esta", "Esta e as futuras", "Cancelar"};
+                int choice = JOptionPane.showOptionDialog(this,
+                        "Este evento faz parte de uma série recorrente.\nDeseja aplicar a alteração somente a esta ocorrência ou a todas as futuras?",
+                        "Editar Série Recorrente",
+                        JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, options, options[0]);
+                
+                if (choice == 2 || choice == JOptionPane.CLOSED_OPTION) return;
+                if (choice == 1) updateSeries = true;
             }
-            
+
+            // === PROTEÇÃO CONTRA CHOQUE DE HORÁRIO NA EDIÇÃO ===
+            if (updateSeries) {
+                String recId = editingEvent.getRecurrenceId();
+                LocalDate baseDate = editingEvent.getDate();
+                for (Event e : state.getEventDao().getAll()) {
+                    if (recId.equals(e.getRecurrenceId()) && !e.getDate().isBefore(baseDate)) {
+                        if (hasConflict(e.getDate(), time, duration, null, recId)) {
+                            error("Conflito detectado na série! Você já tem compromisso no dia " + e.getDate());
+                            return;
+                        }
+                    }
+                }
+                
+                for (Event e : state.getEventDao().getAll()) {
+                    if (recId.equals(e.getRecurrenceId()) && !e.getDate().isBefore(baseDate)) {
+                        e.setTitle(title);
+                        e.setTime(time);
+                        e.setDuration(duration);
+                        e.setLocation(locationField.getText().trim());
+                        e.setDescription(descriptionArea.getText().trim());
+                        e.setCategory((Category) categoryCombo.getSelectedItem());
+                        
+                        state.getReminderDao().getAll().removeIf(r -> r.getEventId().equals(e.getId()));
+                        for (int lead : leads) {
+                            Reminder r = new Reminder();
+                            r.setReminderId(CsvUtils.newUuid());
+                            r.setEventId(e.getId());
+                            r.setLeadTimeMinutes(lead);
+                            state.getReminderDao().getAll().add(r);
+                        }
+                    }
+                }
+            } else {
+                if (hasConflict(date, time, duration, editingEvent.getId(), null)) {
+                    error("Choque de horário! Você já possui um evento nesse momento.");
+                    return;
+                }
+                
+                editingEvent.setTitle(title);
+                editingEvent.setDate(date);
+                editingEvent.setTime(time);
+                editingEvent.setDuration(duration);
+                editingEvent.setLocation(locationField.getText().trim());
+                editingEvent.setDescription(descriptionArea.getText().trim());
+                editingEvent.setCategory((Category) categoryCombo.getSelectedItem());
+
+                state.getReminderDao().getAll().removeIf(r -> r.getEventId().equals(editingEvent.getId()));
+                for (int lead : leads) {
+                    Reminder r = new Reminder();
+                    r.setReminderId(CsvUtils.newUuid());
+                    r.setEventId(editingEvent.getId());
+                    r.setLeadTimeMinutes(lead);
+                    state.getReminderDao().getAll().add(r);
+                }
+            }
+            state.getEventDao().rewriteAll();
             state.getReminderDao().rewriteAll();
 
         } else {
-            Event e = new Event();
-            e.setId(CsvUtils.newUuid());
-            e.setTitle(title);
-            e.setDate(date);
-            e.setTime(time);
-            e.setDuration(duration);
-            e.setLocation(locationField.getText().trim());
-            e.setDescription(descriptionArea.getText().trim());
-            e.setCategory((Category) categoryCombo.getSelectedItem());
-            state.stampOwner(e); 
-            e.setRecurrenceId(null); 
+            if (repeatCheck.isSelected()) {
+                int occurrences;
+                try {
+                    occurrences = Integer.parseInt(occurrencesField.getText().trim());
+                } catch (NumberFormatException ex) {
+                    error("Número de ocorrências inválido. Informe um número inteiro.");
+                    return;
+                }
+                if (occurrences < 2 || occurrences > 50) {
+                    error("O número de ocorrências deve ser entre 2 e 50.");
+                    return;
+                }
 
-            state.getEventDao().append(e);
+                String freq = (String) freqCombo.getSelectedItem();
+                
+                // === PROTEÇÃO CONTRA CHOQUE DE HORÁRIO NA CRIAÇÃO DE SÉRIE ===
+                for (int i = 0; i < occurrences; i++) {
+                    LocalDate loopDate = date;
+                    if ("Diariamente".equals(freq)) {
+                        loopDate = date.plusDays(i);
+                    } else if ("Semanalmente".equals(freq)) {
+                        loopDate = date.plusWeeks(i);
+                    } else if ("Mensalmente".equals(freq)) {
+                        loopDate = date.plusMonths(i);
+                    }
+                    if (hasConflict(loopDate, time, duration, null, null)) {
+                        error("A série bate de frente com outro evento no dia " + loopDate + ".");
+                        return;
+                    }
+                }
 
-            for (int lead : leads) {
-                Reminder r = new Reminder();
-                r.setReminderId(CsvUtils.newUuid());
-                r.setEventId(e.getId());
-                r.setLeadTimeMinutes(lead);
-                state.getReminderDao().append(r);
+                String recurrenceId = CsvUtils.newUuid();
+
+                for (int i = 0; i < occurrences; i++) {
+                    LocalDate loopDate = date;
+                    if ("Diariamente".equals(freq)) loopDate = date.plusDays(i);
+                    else if ("Semanalmente".equals(freq)) loopDate = date.plusWeeks(i);
+                    else if ("Mensalmente".equals(freq)) loopDate = date.plusMonths(i);
+
+                    Event e = new Event();
+                    e.setId(CsvUtils.newUuid());
+                    e.setTitle(title);
+                    e.setDate(loopDate);
+                    e.setTime(time);
+                    e.setDuration(duration);
+                    e.setLocation(locationField.getText().trim());
+                    e.setDescription(descriptionArea.getText().trim());
+                    e.setCategory((Category) categoryCombo.getSelectedItem());
+                    state.stampOwner(e);
+                    e.setRecurrenceId(recurrenceId);
+
+                    state.getEventDao().getAll().add(e);
+
+                    for (int lead : leads) {
+                        Reminder r = new Reminder();
+                        r.setReminderId(CsvUtils.newUuid());
+                        r.setEventId(e.getId());
+                        r.setLeadTimeMinutes(lead);
+                        state.getReminderDao().getAll().add(r);
+                    }
+                }
+                state.getEventDao().rewriteAll();
+                state.getReminderDao().rewriteAll();
+
+            } else {
+                // === PROTEÇÃO CONTRA CHOQUE DE HORÁRIO NA CRIAÇÃO SIMPLES ===
+                if (hasConflict(date, time, duration, null, null)) {
+                    error("Choque de horário! Você já possui um evento nesse momento.");
+                    return;
+                }
+
+                Event e = new Event();
+                e.setId(CsvUtils.newUuid());
+                e.setTitle(title);
+                e.setDate(date);
+                e.setTime(time);
+                e.setDuration(duration);
+                e.setLocation(locationField.getText().trim());
+                e.setDescription(descriptionArea.getText().trim());
+                e.setCategory((Category) categoryCombo.getSelectedItem());
+                state.stampOwner(e);
+                e.setRecurrenceId(null);
+
+                state.getEventDao().append(e);
+
+                for (int lead : leads) {
+                    Reminder r = new Reminder();
+                    r.setReminderId(CsvUtils.newUuid());
+                    r.setEventId(e.getId());
+                    r.setLeadTimeMinutes(lead);
+                    state.getReminderDao().append(r);
+                }
             }
         }
 
@@ -309,13 +453,34 @@ public class EventFormDialog extends JDialog {
     }
 
     private static String categoryLabel(Category c) {
-        if (c == null) {
-            return "";
-        }
+        if (c == null) return "";
         return switch (c) {
             case MEETING -> "Meeting";
             case BIRTHDAY -> "Birthday";
             case APPOINTMENT -> "Appointment";
         };
+    }
+
+    // Verifica se o novo horário colide com algum evento existente do usuário ativo
+    private boolean hasConflict(LocalDate checkDate, LocalTime checkStart, int durationMin, String excludeId, String excludeRecId) {
+        LocalTime checkEnd = checkStart.plusMinutes(durationMin);
+        String me = state.getActiveUser();
+        
+        for (Event e : state.getEventDao().getAll()) {
+            if (!e.getOwner().equals(me)) continue; // Só avalia a agenda do próprio usuário
+            if (excludeId != null && e.getId().equals(excludeId)) continue; // Ignora o evento que está sendo editado
+            if (excludeRecId != null && e.getRecurrenceId() != null && excludeRecId.equals(e.getRecurrenceId())) continue; // Ignora os irmãos da própria série
+            
+            if (e.getDate().equals(checkDate)) {
+                LocalTime eStart = e.getTime();
+                LocalTime eEnd = eStart.plusMinutes(e.getDuration());
+                
+                // Cálculo de interseção: começa antes do outro terminar E termina depois do outro começar
+                if (checkStart.isBefore(eEnd) && checkEnd.isAfter(eStart)) {
+                    return true; 
+                }
+            }
+        }
+        return false;
     }
 }
