@@ -1,0 +1,313 @@
+@startuml class-diagram
+title Java Event Planner — Diagrama de Classes (geral)
+
+skinparam dpi 150
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+skinparam nodesep 28
+skinparam ranksep 55
+skinparam class {
+    BackgroundColor White
+    BorderColor #2C3E50
+    ArrowColor #2C3E50
+    FontSize 12
+}
+skinparam package {
+    FontStyle bold
+    FontSize 15
+}
+skinparam note {
+    BackgroundColor #FFF8DC
+    BorderColor #C9A227
+    FontSize 11
+}
+
+' ===================== FRAMEWORK SWING (so p/ mostrar a heranca) =====================
+package "javax.swing / javax.swing.table (framework)" as fw #ECECEC {
+    class JFrame
+    class JDialog
+    class JPanel
+    class AbstractTableModel
+    class DefaultTableCellRenderer
+    class DefaultListCellRenderer
+}
+
+' ===================== MODEL =====================
+package model #E8F0FE {
+    enum Category {
+        MEETING
+        BIRTHDAY
+        APPOINTMENT
+    }
+
+    enum Frequency {
+        DIARIA
+        SEMANAL
+        MENSAL
+    }
+
+    class Event {
+        -id: String
+        -title: String
+        -date: LocalDate
+        -time: LocalTime
+        -duration: int
+        -location: String
+        -description: String
+        -category: Category
+        -owner: String
+        -recurrenceId: String
+        +eventDateTime(): LocalDateTime
+        +toString(): String
+    }
+
+    class Reminder {
+        -reminderId: String
+        -eventId: String
+        -leadTimeMinutes: int
+    }
+
+    Event "1" o--> "1" Category
+    Event "1" *--> "0..*" Reminder : eventId (FK)
+}
+
+note bottom of Frequency
+  Declarado mas ainda nao usado pela logica de
+  recorrencia: o formulario usa Strings cruas
+  ("Diariamente", "Semanalmente", "Mensalmente")
+  num JComboBox em vez deste enum.
+end note
+
+note bottom of Event
+  recurrenceId: varios Event compartilham o mesmo
+  UUID quando pertencem a mesma serie recorrente
+  (DT07). Cada ocorrencia e um Event completo.
+end note
+
+' ===================== PERSISTENCE =====================
+package persistence #E6F4EA {
+    class CsvUtils <<utility>> {
+        +{static} newUuid(): String
+        +{static} formatDate(d): String
+        +{static} parseDate(s): LocalDate
+        +{static} escape(field): String
+        +{static} toLine(fields...): String
+        +{static} parseLine(line): List<String>
+        +{static} joinRecords(lines): List<String>
+        +{static} nz(s): String
+    }
+
+    class EventDao {
+        -file: Path
+        -events: List<Event>
+        +load(): void
+        +getAll(): List<Event>
+        +append(e: Event): void
+        +rewriteAll(): void
+    }
+
+    class ReminderDao {
+        -file: Path
+        -reminders: List<Reminder>
+        +load(): void
+        +getAll(): List<Reminder>
+        +append(r: Reminder): void
+        +rewriteAll(): void
+        +findByEventId(id): List<Reminder>
+    }
+
+    EventDao "1" o--> "*" Event
+    ReminderDao "1" o--> "*" Reminder
+    EventDao ..> CsvUtils : usa
+    ReminderDao ..> CsvUtils : usa
+}
+
+' ===================== SERVICE =====================
+package service #F3E8FD {
+    class AppState {
+        -activeUser: String
+        +getUsers(): List<String>
+        +isLoggedIn(): boolean
+        +stampOwner(e: Event): void
+        +isOwnedByActiveUser(e: Event): boolean
+    }
+
+    class ReminderService {
+        +computeStartupAlerts(): List<Event>
+        +computeStartupAlerts(now): List<Event>
+    }
+
+    AppState *--> EventDao
+    AppState *--> ReminderDao
+    ReminderService ..> EventDao : usa
+    ReminderService ..> ReminderDao : usa
+}
+
+' ===================== UI =====================
+package ui #FDF1E6 {
+    interface DaySelectionListener {
+        +onDaySelected(date: LocalDate): void
+    }
+
+    class MainWindow {
+        +openEventForm(): void
+        +openSearch(): void
+        -refreshViews(): void
+    }
+
+    class LoginDialog {
+        -confirm(): void
+    }
+
+    class CalendarPanel {
+        +setDaySelectionListener(l): void
+        +getSelectedDate(): LocalDate
+        +refresh(): void
+    }
+
+    class EventListView {
+        #clear(): void
+        #addHeader(text): void
+        #addEvent(e: Event): void
+        #addNotice(text): void
+        #finish(): void
+    }
+
+    class DailyView {
+        +showDay(date: LocalDate): void
+    }
+
+    class WeeklyView {
+        +showWeek(start: LocalDate): void
+    }
+
+    class EventRow <<utility>> {
+        +{static} create(e: Event): JComponent
+    }
+
+    class EventFormDialog {
+        -editingEvent: Event
+        -repeatCheck: JCheckBox
+        -freqCombo: JComboBox<String>
+        -occurrencesField: JTextField
+        -onSave(): void
+        -hasConflict(date, start, dur, exId, exRecId): boolean
+    }
+
+    class SearchDialog {
+        -refresh(): void
+        -deleteSelectedEvent(): void
+        -editSelectedEvent(): void
+    }
+
+    class ReminderAlertDialog
+
+    class TeamView {
+        +showDay(date: LocalDate): void
+    }
+
+    class TeamScheduleTableModel {
+        -teamMembers: List<String>
+        -events: List<Event>
+        -date: LocalDate
+        +getRowCount(): int
+        +getColumnCount(): int
+        +getValueAt(row, col): Object
+        +updateData(events, date): void
+    }
+
+    class TeamScheduleCellRenderer {
+        +getTableCellRendererComponent(...): Component
+    }
+
+    ' heranca de framework
+    JFrame <|-- MainWindow
+    JDialog <|-- LoginDialog
+    JDialog <|-- EventFormDialog
+    JDialog <|-- SearchDialog
+    JDialog <|-- ReminderAlertDialog
+    JPanel <|-- CalendarPanel
+    JPanel <|-- EventListView
+    JPanel <|-- TeamView
+    AbstractTableModel <|-- TeamScheduleTableModel
+    DefaultTableCellRenderer <|-- TeamScheduleCellRenderer
+
+    ' heranca interna (reuso de codigo: base comum das listas rolaveis)
+    EventListView <|-- DailyView
+    EventListView <|-- WeeklyView
+
+    ' composicao da janela principal
+    MainWindow *--> CalendarPanel
+    MainWindow *--> DailyView
+    MainWindow *--> WeeklyView
+    MainWindow *--> TeamView
+
+    ' observer simplificado
+    CalendarPanel o--> DaySelectionListener
+
+    ' uso do EventRow (fabrica estatica reaproveitada)
+    DailyView ..> EventRow : usa
+    WeeklyView ..> EventRow : usa
+    ReminderAlertDialog ..> EventRow : usa
+
+    ' polimorfismo por sobrescrita (subclasse anonima)
+    EventFormDialog ..> DefaultListCellRenderer : subclasse anonima\n(categoryCombo)
+
+    ' composicao da visao de equipe
+    TeamView *--> TeamScheduleTableModel
+    TeamView *--> TeamScheduleCellRenderer
+}
+
+note right of DaySelectionListener
+  Implementada via expressao lambda em MainWindow
+  (nao por classe nomeada): liga a selecao de dia do
+  CalendarPanel as 3 visoes (Diaria/Semanal/Equipe)
+  simultaneamente — Observer simplificado.
+end note
+
+note bottom of EventFormDialog
+  Recorrencia (RF17-21) e a escolha de escopo
+  "Somente esta" / "Esta e as futuras" (RF23) ficam
+  dentro de onSave(): nao ha classe separada de serie.
+  hasConflict(...) detecta choque de horario na agenda
+  do usuario ativo (extra, fora do RF01-24). O combo de
+  categoria usa subclasse anonima de
+  DefaultListCellRenderer (polimorfismo).
+end note
+
+note bottom of SearchDialog
+  deleteSelectedEvent() reusa o dialogo de escopo de
+  3 opcoes para excluir em cascata as ocorrencias
+  futuras de uma serie (RF24).
+end note
+
+' ===================== LIGACOES ENTRE CAMADAS =====================
+TeamScheduleTableModel ..> Event : consulta
+TeamScheduleCellRenderer ..> Event : pinta
+TeamScheduleCellRenderer ..> Category : le p/ cor da celula
+
+EventFormDialog ..> Event : cria/edita
+EventFormDialog ..> Reminder : cria
+SearchDialog ..> Event : exibe/edita/exclui
+
+MainWindow ..> AppState : usa
+LoginDialog ..> AppState : usa
+EventFormDialog ..> AppState : usa
+SearchDialog ..> AppState : usa
+CalendarPanel ..> EventDao : consulta (memoria)
+DailyView ..> EventDao : consulta (memoria)
+WeeklyView ..> EventDao : consulta (memoria)
+TeamView ..> EventDao : consulta (memoria)
+SearchDialog ..> EventDao : consulta/altera
+
+' ===================== ENTRY POINT =====================
+class Main <<entry point>> #FFF3CD {
+    +{static} main(args: String[]): void
+}
+Main ..> AppState : cria
+Main ..> LoginDialog : abre (modal)
+Main ..> ReminderService : usa
+Main ..> MainWindow : abre
+
+@enduml
